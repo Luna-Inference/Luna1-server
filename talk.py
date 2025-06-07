@@ -130,6 +130,9 @@ rkllm.rkllm_destroy.argtypes = [LLMHandle]
 rkllm.rkllm_set_chat_template.restype = ctypes.c_int
 rkllm.rkllm_set_chat_template.argtypes = [LLMHandle, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
 
+rkllm.rkllm_abort.restype = ctypes.c_int
+rkllm.rkllm_abort.argtypes = [LLMHandle]
+
 
 # --- Main Inference Logic ---
 def run_inference():
@@ -214,14 +217,11 @@ def run_inference():
         ret = rkllm.rkllm_run(llm_handle, ctypes.byref(rkllm_input), ctypes.byref(rkllm_infer_params), None)
         if ret != 0:
             print(f"\nError: rkllm_run failed with code {ret}")
-
     print("Destroying RKLLM model...")
     ret_destroy = rkllm.rkllm_destroy(llm_handle)
     if ret_destroy != 0:
         print(f"Error: rkllm_destroy failed with code {ret_destroy}")
     else:
-        print("RKLLM model destroyed successfully.")
-
         print("RKLLM model destroyed successfully.")
 
 if __name__ == "__main__":
