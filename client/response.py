@@ -6,12 +6,16 @@ client = OpenAI(
     base_url="http://localhost:8000/v1"
 )
 
+# Test response completion
 response = client.responses.create(
     model="gpt-4.1",
-    input="Write a one-sentence bedtime story about a unicorn."
+    input="Hello.",
+    
 )
 
 # Print the generated text
 print("Generated response:")
 print(response.output_text)    
-# print(response)
+
+
+

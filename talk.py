@@ -180,10 +180,9 @@ def run_inference():
     print("RKLLM model initialized successfully.")
 
     print("Setting chat template...")
-    # Define your template strings according to the model's requirements
     system_prompt_str = SYSTEM_PROMPT.encode('utf-8')
-    prompt_prefix_str = b"<|im_start|>user\n"  # Prefix before user input
-    prompt_postfix_str = b"<|im_end|>\n<|im_start|>assistant\n" # Suffix after user input
+    prompt_prefix_str = PROMPT_PREFIX.encode('utf-8')
+    prompt_postfix_str = PROMPT_POSTFIX.encode('utf-8')
     ret_template = rkllm.rkllm_set_chat_template(
         llm_handle,
         ctypes.c_char_p(system_prompt_str),
