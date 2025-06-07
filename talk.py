@@ -127,6 +127,9 @@ rkllm.rkllm_run.argtypes = [LLMHandle, ctypes.POINTER(RKLLMInput), ctypes.POINTE
 rkllm.rkllm_destroy.restype = ctypes.c_int
 rkllm.rkllm_destroy.argtypes = [LLMHandle]
 
+rkllm.rkllm_set_chat_template.restype = ctypes.c_int
+rkllm.rkllm_set_chat_template.argtypes = [LLMHandle, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
+
 
 # --- Main Inference Logic ---
 def run_inference():
@@ -173,9 +176,24 @@ def run_inference():
         return
     print("RKLLM model initialized successfully.")
 
+    print("Setting chat template...")
+    # Define your template strings according to the model's requirements
+    system_prompt_str = SYSTEM_PROMPT.encode('utf-8')
+    prompt_prefix_str = b"<|im_start|>user\n"  # Prefix before user input
+    prompt_postfix_str = b"<|im_end|>\n<|im_start|>assistant\n" # Suffix after user input
+    ret_template = rkllm.rkllm_set_chat_template(
+        llm_handle,
+        ctypes.c_char_p(system_prompt_str),
+        ctypes.c_char_p(prompt_prefix_str),
+        ctypes.c_char_p(prompt_postfix_str)
+    )
+    if ret_template != 0:
+        print(f"Warning: rkllm_set_chat_template failed with code {ret_template}")
+    else:
+        print("Chat template set successfully.")
+
     # Conversation loop
     print("\nType your message and press Enter. Type 'exit' or 'quit' to end the conversation.\n")
-    system_prompt = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n".encode('utf-8')
     
     while True:
         user_input = input("You: ")
@@ -183,8 +201,7 @@ def run_inference():
             print("Exiting conversation.")
             break
         # Build prompt with system prompt and user input (no history)
-        prompt = system_prompt + b"<|im_start|>user\n" + user_input.encode('utf-8') + b"<|im_end|>\n<|im_start|>assistant\n"
-
+        prompt = user_input.encode('utf-8')
         rkllm_input = RKLLMInput()
         rkllm_input.input_type = RKLLM_INPUT_PROMPT
         rkllm_input.prompt_input = ctypes.c_char_p(prompt)

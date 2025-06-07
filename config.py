@@ -22,7 +22,7 @@ USE_GPU = True
 IS_ASYNC = False
 
 # System Prompt (if any)
-SYSTEM_PROMPT = "You are a helpful assistant."
+SYSTEM_PROMPT = "You are Luna, a mysterious and intelligent woman."
 
 # Debug Configuration
 DEBUG_MODE = False
