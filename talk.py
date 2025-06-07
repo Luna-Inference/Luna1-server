@@ -167,6 +167,7 @@ def run_inference():
     
     # Set extended parameters
     param.extend_param.enabled_cpus_num = CPU_CORE_COUNT
+    param.extend_param.enabled_cpus_mask = ENABLED_CPU_MASK
     param.extend_param.embed_flash = 1  # Explicitly set embed_flash to 1
 
     print(f"Using model: {param.model_path.decode()}")
