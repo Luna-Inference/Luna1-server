@@ -1,45 +1,39 @@
 import openai
-from api import *
+import os
+
+# Configure the client for llama.cpp server
 client = openai.OpenAI(
-    api_key="",
-    base_url="http://localhost:8080/v1"
+    api_key="sk-no-key-required",  # llama.cpp server typically doesn't require a key
+    base_url="http://localhost:1306/v1"  # Default llama.cpp server port
 )
 
-# Define your tools
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Get current weather for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "City name, e.g. San Francisco, CA"
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"]
-                    }
-                },
-                "required": ["location"]
-            }
-        }
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get current temperature for a given location.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City and country e.g. Bogotá, Colombia"
+                }
+            },
+            "required": [
+                "location"
+            ],
+            "additionalProperties": False
+        },
+        "strict": True
     }
-]
+}]
 
-# Make request with tools
-response = client.chat.completions.create(
+completion = client.chat.completions.create(
     model="gpt-4.1",
-    messages=[
-        {"role": "user", "content": "What's the weather in Paris?"}
-    ],
-    tools=tools,
-    tool_choice="auto"
+    messages=[{"role": "user", "content": "What is the weather like in Paris today?"}],
+    tools=tools
 )
 
-# Check if model wants to call a function
-if response.choices[0].finish_reason == "tool_calls":
-    print("Model wants to call:", response.choices[0].message.tool_calls)
+print(completion.choices[0].message.tool_calls)
