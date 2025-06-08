@@ -791,6 +791,25 @@ def v1_compatibility():
     """Redirect /v1/ calls to chat completions for compatibility"""
     return chat_completions()
 
+# Models endpoint
+@app.route('/v1/models', methods=['GET'])
+def models():
+    """Return a list of available models mimicking OpenAI's API format"""
+    return jsonify({
+        "object": "list",
+        "data": [
+            {
+                "id": "luna-small",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "rkllm",
+                "permission": [],
+                "root": "luna-small",
+                "parent": None
+            }
+        ]
+    })
+
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health():
