@@ -1,1 +1,1 @@
-./llama.cpp/build/bin/llama-server -m ../model/Qwen3-1.7B-Q4_K_M.gguf --port 1306 -t 4 --verbose
+./llama.cpp/build/bin/llama-server -m ../model/Qwen3-1.7B-Q4_K_M.gguf --port 1306 -t 4 --jinja --verbose

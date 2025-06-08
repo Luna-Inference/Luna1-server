@@ -7,10 +7,13 @@ import threading
 import time
 import argparse
 import json
-from flask import Flask, request, jsonify, Response
-from config import *
+import re
 import uuid
+import importlib.util
 from datetime import datetime
+from flask import Flask, request, jsonify, Response
+from jinja2 import Template
+from config import *
 
 app = Flask(__name__)
 
@@ -158,7 +161,13 @@ class RKLLMResult(ctypes.Structure):
     ]
 
 # OpenAI API Configuration
-DEFAULT_MODEL_NAME = "rkllm-local"  # Default model name to return
+DEFAULT_MODEL_NAME = "rkllm-local"
+
+# Tool calling configuration
+TOOL_REGISTRY = {}  # Will store dynamically loaded tools
+
+# Jinja2 templates for tool formatting
+TOOL_SYSTEM_TEMPLATE = Template(SYSTEM_TEMPLATE)
 
 # Create a lock to control multi-user access to the server.
 lock = threading.Lock()
@@ -170,8 +179,6 @@ is_blocking = False
 global_text = []
 global_state = -1
 split_byte_data = bytes(b"")
-
-
 
 def openai_error_response(message, error_type="invalid_request_error", param=None, code=None, status_code=400):
     """Generate OpenAI-compatible error response"""
@@ -204,6 +211,100 @@ def callback_impl(result, userdata, state):
 # Connect the callback function between the Python side and the C++ side
 callback_type = ctypes.CFUNCTYPE(None, ctypes.POINTER(RKLLMResult), ctypes.c_void_p, ctypes.c_int)
 callback = callback_type(callback_impl)
+
+
+# ADD THESE FUNCTIONS TO YOUR RKLLM SERVER (after the imports, around line 200):
+
+def get_profession(name: str) -> dict:
+    """Returns the profession of a person given their name."""
+    people_professions = {
+        "john": "Software Engineer",
+        "emma": "Doctor", 
+        "michael": "Teacher",
+        "sarah": "Lawyer",
+        "david": "Architect",
+        "lisa": "Chef",
+        "robert": "Accountant",
+        "jennifer": "Marketing Manager",
+        "william": "Electrician",
+        "olivia": "Graphic Designer"
+    }
+    
+    name_lower = name.lower()
+    if name_lower in people_professions:
+        return {
+            "status": "success",
+            "report": f"{name} is a {people_professions[name_lower]}."
+        }
+    else:
+        return {
+            "status": "error", 
+            "error_message": f"No profession information found for '{name}'."
+        }
+
+def get_current_time_string() -> str:
+    """Returns the current time in the format 'H:MMam/pm' (e.g., '1:30pm')."""
+    import datetime
+    now = datetime.datetime.now()
+    return now.strftime("%-I:%M%p").lower()
+
+# Built-in tool registry
+BUILTIN_TOOLS = {
+    'get_profession': get_profession,
+    'get_current_time_string': get_current_time_string
+}
+
+# REPLACE your existing execute_tool_call function with this:
+def execute_tool_call(tool_name, arguments):
+    """Execute a tool call and return the result"""
+    
+    # Check built-in tools first (for Google ADK)
+    if tool_name in BUILTIN_TOOLS:
+        try:
+            result = BUILTIN_TOOLS[tool_name](**arguments)
+            return result
+        except Exception as e:
+            return {"error": f"Built-in tool execution failed: {str(e)}"}
+    
+    # Fall back to file-based tools (existing functionality)
+    if tool_name in TOOL_REGISTRY:
+        try:
+            result = TOOL_REGISTRY[tool_name](**arguments)
+            return result
+        except Exception as e:
+            return {"error": f"File tool execution failed: {str(e)}"}
+    
+    return {"error": f"Tool '{tool_name}' not found"}
+
+def parse_tool_calls(text):
+    """Parse tool calls from model response"""
+    tool_call_pattern = r'<tool_call>\s*(\{.*?\})\s*</tool_call>'
+    matches = re.findall(tool_call_pattern, text, re.DOTALL)
+    
+    tool_calls = []
+    for match in matches:
+        try:
+            tool_data = json.loads(match)
+            tool_call_id = f"call_{str(uuid.uuid4())}"
+            tool_calls.append({
+                "id": tool_call_id,
+                "type": "function",
+                "function": {
+                    "name": tool_data.get("name"),
+                    "arguments": json.dumps(tool_data.get("arguments", {}))
+                }
+            })
+        except json.JSONDecodeError as e:
+            print(f"Error parsing tool call: {e}")
+            continue
+    
+    return tool_calls
+
+def extract_text_without_tool_calls(text):
+    """Remove tool call tags from text and return clean content"""
+    tool_call_pattern = r'<tool_call>.*?</tool_call>'
+    clean_text = re.sub(tool_call_pattern, '', text, flags=re.DOTALL)
+    return clean_text.strip()
 
 # Define the RKLLM class
 class RKLLM(object):
@@ -296,21 +397,136 @@ class RKLLM(object):
     def release(self):
         self.rkllm_destroy(self.handle)
 
-def format_messages_to_prompt(messages):
-    """Convert OpenAI messages format to a single prompt string"""
+def format_messages_to_prompt(messages, tools=None):
+    """Convert OpenAI messages format to a prompt string with tool support"""
     prompt_parts = []
+    
+    # Add system message with tool information
+    system_message = None
+    for message in messages:
+        if message.get('role') == 'system':
+            system_message = message.get('content', '')
+            break
+    
+    if system_message:
+        if tools:
+            # Combine original system message with tool instructions
+            tool_instruction = TOOL_SYSTEM_TEMPLATE.render(tools=tools)
+            combined_system = f"{system_message}\n\n{tool_instruction}"
+            prompt_parts.append(f"System: {combined_system}")
+        else:
+            prompt_parts.append(f"System: {system_message}")
+    elif tools:
+        # No system message, but we have tools
+        tool_instruction = TOOL_SYSTEM_TEMPLATE.render(tools=tools)
+        prompt_parts.append(f"System: {tool_instruction}")
+    
+    # Add other messages
     for message in messages:
         role = message.get('role', '')
         content = message.get('content', '')
         
         if role == 'system':
-            prompt_parts.append(f"System: {content}")
+            continue  # Already handled above
         elif role == 'user':
             prompt_parts.append(f"User: {content}")
         elif role == 'assistant':
-            prompt_parts.append(f"Assistant: {content}")
+            # Handle assistant messages with tool calls
+            if message.get('tool_calls'):
+                tool_calls_text = content if content else ""
+                for tool_call in message['tool_calls']:
+                    func_name = tool_call['function']['name']
+                    func_args = tool_call['function']['arguments']
+                    tool_calls_text += f"\n<tool_call>\n{{'name': '{func_name}', 'arguments': {func_args}}}\n</tool_call>"
+                prompt_parts.append(f"Assistant: {tool_calls_text}")
+            else:
+                prompt_parts.append(f"Assistant: {content}")
+        elif role == 'tool':
+            tool_call_id = message.get('tool_call_id', '')
+            prompt_parts.append(f"Tool Result: {content}\n\nBased on this tool result, please provide a helpful response to the user. Do not make additional tool calls.")
     
     return "\n".join(prompt_parts) + "\nAssistant:"
+
+def process_conversation_with_tools(messages, tools):
+    """Process a conversation with a single tool call iteration"""
+    conversation_messages = messages.copy()
+    
+    # First call: Check if model wants to use tools
+    prompt = format_messages_to_prompt(conversation_messages, tools)
+    
+    # Run the model
+    global global_text, global_state
+    global_text = []
+    global_state = -1
+    
+    model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
+    model_thread.start()
+    
+    full_response = ""
+    model_thread_finished = False
+    
+    while not model_thread_finished:
+        while len(global_text) > 0:
+            full_response += global_text.pop(0)
+            time.sleep(0.005)
+        
+        model_thread.join(timeout=0.005)
+        model_thread_finished = not model_thread.is_alive()
+    
+    # Check if the response contains tool calls
+    tool_calls = parse_tool_calls(full_response)
+    
+    if tool_calls:
+        # Extract text content without tool calls
+        content = extract_text_without_tool_calls(full_response)
+        
+        # Add assistant message with tool calls
+        conversation_messages.append({
+            "role": "assistant",
+            "content": content.strip() if content.strip() else None,
+            "tool_calls": tool_calls
+        })
+        
+        # Execute tool calls and add results
+        for tool_call in tool_calls:
+            func_name = tool_call['function']['name']
+            func_args = json.loads(tool_call['function']['arguments'])
+            
+            # Execute the tool
+            tool_result = execute_tool_call(func_name, func_args)
+            
+            # Add tool result message
+            conversation_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call['id'],
+                "content": json.dumps(tool_result)
+            })
+        
+        # Second call: Get final response after tool execution
+        final_prompt = format_messages_to_prompt(conversation_messages, tools)
+        final_prompt += "\n\nPlease provide a natural language response based on the tool results above. Do not make any more tool calls."
+        
+        global_text = []
+        global_state = -1
+        
+        final_thread = threading.Thread(target=rkllm_model.run, args=(final_prompt,))
+        final_thread.start()
+        
+        final_response = ""
+        final_thread_finished = False
+        
+        while not final_thread_finished:
+            while len(global_text) > 0:
+                final_response += global_text.pop(0)
+                time.sleep(0.005)
+            
+            final_thread.join(timeout=0.005)
+            final_thread_finished = not final_thread.is_alive()
+        
+        return final_response.strip(), conversation_messages
+    else:
+        # No tool calls, return the response directly
+        return full_response.strip(), conversation_messages
 
 # OpenAI API Endpoints
 
@@ -341,6 +557,8 @@ def chat_completions():
         # Get other parameters
         model = data.get('model', DEFAULT_MODEL_NAME)
         stream = data.get('stream', False)
+        tools = data.get('tools', [])
+        tool_choice = data.get('tool_choice')
         max_tokens = data.get('max_tokens')
         temperature = data.get('temperature')
         top_p = data.get('top_p')
@@ -348,84 +566,16 @@ def chat_completions():
         lock.acquire()
         try:
             is_blocking = True
-            global_text = []
-            global_state = -1
-            
-            # Convert messages to prompt
-            prompt = format_messages_to_prompt(messages)
             
             # Generate unique ID and timestamp
             completion_id = f"chatcmpl-{str(uuid.uuid4())}"
             created_timestamp = int(datetime.now().timestamp())
             
-            if stream:
-                def generate():
-                    try:
-                        model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
-                        model_thread.start()
-                        
-                        full_content = ""
-                        model_thread_finished = False
-                        
-                        while not model_thread_finished:
-                            while len(global_text) > 0:
-                                chunk_content = global_text.pop(0)
-                                full_content += chunk_content
-                                
-                                chunk_response = {
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created_timestamp,
-                                    "model": model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {
-                                            "content": chunk_content
-                                        },
-                                        "finish_reason": None
-                                    }]
-                                }
-                                yield f"data: {json.dumps(chunk_response)}\n\n"
-                            
-                            model_thread.join(timeout=0.005)
-                            model_thread_finished = not model_thread.is_alive()
-                        
-                        # Send final chunk with finish_reason
-                        final_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk", 
-                            "created": created_timestamp,
-                            "model": model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {},
-                                "finish_reason": "stop"
-                            }]
-                        }
-                        yield f"data: {json.dumps(final_chunk)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        
-                    finally:
-                        pass
+            if tools:
+                # Process conversation with tools (single iteration)
+                final_response, final_messages = process_conversation_with_tools(messages, tools)
                 
-                return Response(generate(), content_type='text/plain; charset=utf-8')
-            
-            else:
-                # Non-streaming response
-                model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
-                model_thread.start()
-                
-                full_content = ""
-                model_thread_finished = False
-                
-                while not model_thread_finished:
-                    while len(global_text) > 0:
-                        full_content += global_text.pop(0)
-                        time.sleep(0.005)
-                    
-                    model_thread.join(timeout=0.005)
-                    model_thread_finished = not model_thread.is_alive()
-                
+                # Always return the final response (no tool_calls in the final response)
                 response = {
                     "id": completion_id,
                     "object": "chat.completion",
@@ -435,18 +585,117 @@ def chat_completions():
                         "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": full_content.strip()
+                            "content": final_response
                         },
                         "finish_reason": "stop"
                     }],
                     "usage": {
-                        "prompt_tokens": len(prompt.split()),  # Rough estimation
-                        "completion_tokens": len(full_content.split()),  # Rough estimation
-                        "total_tokens": len(prompt.split()) + len(full_content.split())
+                        "prompt_tokens": len(str(final_messages).split()),
+                        "completion_tokens": len(final_response.split()),
+                        "total_tokens": len(str(final_messages).split()) + len(final_response.split())
                     }
                 }
                 
                 return jsonify(response), 200
+            else:
+                # No tools, use original logic
+                prompt = format_messages_to_prompt(messages)
+                
+                if stream:
+                    def generate():
+                        try:
+                            global_text = []
+                            global_state = -1
+                            
+                            model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
+                            model_thread.start()
+                            
+                            full_content = ""
+                            model_thread_finished = False
+                            
+                            while not model_thread_finished:
+                                while len(global_text) > 0:
+                                    chunk_content = global_text.pop(0)
+                                    full_content += chunk_content
+                                    
+                                    chunk_response = {
+                                        "id": completion_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": created_timestamp,
+                                        "model": model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {
+                                                "content": chunk_content
+                                            },
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(chunk_response)}\n\n"
+                                
+                                model_thread.join(timeout=0.005)
+                                model_thread_finished = not model_thread.is_alive()
+                            
+                            # Send final chunk with finish_reason
+                            final_chunk = {
+                                "id": completion_id,
+                                "object": "chat.completion.chunk", 
+                                "created": created_timestamp,
+                                "model": model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": "stop"
+                                }]
+                            }
+                            yield f"data: {json.dumps(final_chunk)}\n\n"
+                            yield "data: [DONE]\n\n"
+                            
+                        finally:
+                            pass
+                    
+                    return Response(generate(), content_type='text/plain; charset=utf-8')
+                
+                else:
+                    # Non-streaming response
+                    global_text = []
+                    global_state = -1
+                    
+                    model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
+                    model_thread.start()
+                    
+                    full_content = ""
+                    model_thread_finished = False
+                    
+                    while not model_thread_finished:
+                        while len(global_text) > 0:
+                            full_content += global_text.pop(0)
+                            time.sleep(0.005)
+                        
+                        model_thread.join(timeout=0.005)
+                        model_thread_finished = not model_thread.is_alive()
+                    
+                    response = {
+                        "id": completion_id,
+                        "object": "chat.completion",
+                        "created": created_timestamp,
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": full_content.strip()
+                            },
+                            "finish_reason": "stop"
+                        }],
+                        "usage": {
+                            "prompt_tokens": len(prompt.split()),
+                            "completion_tokens": len(full_content.split()),
+                            "total_tokens": len(prompt.split()) + len(full_content.split())
+                        }
+                    }
+                    
+                    return jsonify(response), 200
                 
         finally:
             lock.release()
@@ -521,8 +770,8 @@ def completions():
                     "finish_reason": "stop"
                 }],
                 "usage": {
-                    "prompt_tokens": len(prompt.split()),  # Rough estimation
-                    "completion_tokens": len(full_completion.split()),  # Rough estimation  
+                    "prompt_tokens": len(prompt.split()),
+                    "completion_tokens": len(full_completion.split()),
                     "total_tokens": len(prompt.split()) + len(full_completion.split())
                 }
             }
@@ -536,10 +785,16 @@ def completions():
     except Exception as e:
         return openai_error_response(f"Internal server error: {str(e)}", error_type="server_error", status_code=500)
 
+# Compatibility route for /v1/ endpoint
+@app.route('/v1/', methods=['POST'])
+def v1_compatibility():
+    """Redirect /v1/ calls to chat completions for compatibility"""
+    return chat_completions()
+
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "healthy"}), 200
+    return jsonify({"status": "healthy", "tools_loaded": list(TOOL_REGISTRY.keys())}), 200
 
 # Global model instance
 rkllm_model = None
@@ -550,11 +805,13 @@ if __name__ == "__main__":
     parser.add_argument('--target_platform', type=str, default=TARGET_PLATFORM, help='Target platform: e.g., rk3588/rk3576 (default from config.py)')
     parser.add_argument('--lora_model_path', type=str, help='Absolute path of the lora_model on the Linux board')
     parser.add_argument('--prompt_cache_path', type=str, help='Absolute path of the prompt_cache file on the Linux board')
+    parser.add_argument('--tools_dir', type=str, default='tools', help='Directory containing tool Python files')
     parser.add_argument('--port', type=int, default=8080, help='Port to run the server on')
     args = parser.parse_args()
     
     print(f"Using model path: {args.rkllm_model_path}")
     print(f"Using target platform: {args.target_platform}")
+    print(f"Using tools directory: {args.tools_dir}")
 
     if not os.path.exists(args.rkllm_model_path):
         print("Error: Please provide the correct rkllm model path, and ensure it is the absolute path on the board.")
@@ -576,6 +833,7 @@ if __name__ == "__main__":
         sys.stdout.flush()
         exit()
 
+
     # Fix frequency
     command = "sudo bash fix_freq_{}.sh".format(args.target_platform)
     subprocess.run(command, shell=True)
@@ -589,11 +847,12 @@ if __name__ == "__main__":
     model_path = args.rkllm_model_path
     rkllm_model = RKLLM(model_path, args.lora_model_path, args.prompt_cache_path)
     print("RKLLM Model has been initialized successfully!")
-    print("OpenAI-compatible API server is starting...")
+    print("OpenAI-compatible API server with tool support is starting...")
     print(f"API Endpoints:")
-    print(f"  POST /v1/chat/completions")
+    print(f"  POST /v1/chat/completions (with tool support)")
     print(f"  POST /v1/completions") 
     print(f"  GET /health")
+    print(f"Loaded tools: {list(TOOL_REGISTRY.keys())}")
     print("==============================")
     sys.stdout.flush()
 

@@ -37,3 +37,23 @@ LOG_LEVEL = 2  # 0: Error, 1: Warning, 2: Info, 3: Debug
 # Inference Modes
 KEEP_HISTORY = 0 # 0 = no history, 1 = keep history
 
+
+# Formatting
+
+SYSTEM_TEMPLATE = """You are a helpful assistant with access to tools.
+
+{% if tools %}
+You have access to the following tools:
+{% for tool in tools %}
+- {{ tool.function.name }}: {{ tool.function.description }}
+  Parameters: {{ tool.function.parameters | tojson }}
+{% endfor %}
+
+To use a tool, respond with:
+<tool_call>
+{"name": "tool_name", "arguments": {"param": "value"}}
+</tool_call>
+
+IMPORTANT: After receiving tool results, provide a natural language response to the user. Do NOT call tools again - use the results to answer the question directly.
+{% endif %}"""
+

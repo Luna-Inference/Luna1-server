@@ -43,11 +43,16 @@ def get_profession(name: str) -> dict:
             "error_message": f"No profession information found for '{name}'."
         }
 
+def get_current_time_string() -> str:
+    """Returns the current time in the format 'H:MMam/pm' (e.g., '1:30pm')."""
+    now = datetime.datetime.now()
+    return now.strftime("%-I:%M%p").lower()
+
 
 root_agent = Agent(
     name="profession_agent",
     # model= LiteLlm(model="ollama_chat/qwen3:0.6b"),
-    model = LiteLlm(model="openai/mistral-small3.1"),
+    model = LiteLlm(model="openai/qwen3:1.7b"),
     description=(
         "Agent to answer questions people's professions."
     ),
