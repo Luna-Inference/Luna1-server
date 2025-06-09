@@ -186,9 +186,17 @@ lock = threading.Lock()
 # Create a global variable to indicate whether the server is currently in a blocked state.
 is_blocking = False
 
+# Thread-safe queue for streaming output
+from queue import Queue
+
 # Define global variables to store the callback function output
-global_text = []
-global_state = -1
+class GlobalState:
+    def __init__(self):
+        self.text_queue = Queue()
+        self.finished = False
+        self.lock = threading.Lock()
+
+global_state = GlobalState()
 split_byte_data = bytes(b"")
 
 def openai_error_response(message, error_type="invalid_request_error", param=None, code=None, status_code=400):
@@ -204,20 +212,20 @@ def openai_error_response(message, error_type="invalid_request_error", param=Non
 
 # Define the callback function
 def callback_impl(result, userdata, state):
-    global global_text, global_state, split_byte_data
-    if state == LLMCallState.RKLLM_RUN_FINISH:
-        global_state = state
-        print("\n")
-        sys.stdout.flush()
-    elif state == LLMCallState.RKLLM_RUN_ERROR:
-        global_state = state
-        print("run error")
-        sys.stdout.flush()
-    elif state == LLMCallState.RKLLM_RUN_NORMAL:
-        global_state = state
-        if result.contents.text:
-            text_chunk = result.contents.text.decode('utf-8')
-            global_text.append(text_chunk)
+    global global_state, split_byte_data
+    with global_state.lock:
+        if state == 0:  # Normal text output (RKLLM_RUN_NORMAL)
+            if result.contents.text:
+                text_chunk = result.contents.text.decode('utf-8')
+                global_state.text_queue.put(text_chunk)
+                print(text_chunk, end="", flush=True)
+        elif state == 2:  # Generation finished (RKLLM_RUN_FINISH)
+            print("\n", end="", flush=True)
+            global_state.finished = True
+        elif state == 3:  # Error state (RKLLM_RUN_ERROR)
+            print("run error", file=sys.stderr)
+            global_state.finished = True
+    return
 
 # Connect the callback function between the Python side and the C++ side
 callback_type = ctypes.CFUNCTYPE(None, ctypes.POINTER(RKLLMResult), ctypes.c_void_p, ctypes.c_int)
@@ -543,14 +551,19 @@ def process_conversation_with_tools(messages, tools):
 
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
-    global global_text, global_state, is_blocking
-
-    if is_blocking or global_state == 0:
-        return openai_error_response(
-            "The model is currently busy. Please try again later.",
-            error_type="server_error",
-            status_code=503
-        )
+    global global_state, is_blocking
+    
+    # Create a lock for the blocking state
+    blocking_lock = threading.Lock()
+    
+    with blocking_lock:
+        if is_blocking:
+            return openai_error_response(
+                "The model is currently busy. Please try again later.",
+                error_type="server_error",
+                status_code=503
+            )
+        is_blocking = True
     
     try:
         data = request.json
@@ -614,20 +627,23 @@ def chat_completions():
                 
                 if stream:
                     def generate():
+                        global global_state
                         try:
-                            global_text = []
-                            global_state = -1
+                            # Create a new state for this request
+                            request_state = GlobalState()
+                            global global_state
+                            global_state = request_state
                             
                             model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
                             model_thread.start()
                             
                             full_content = ""
-                            model_thread_finished = False
                             
-                            while not model_thread_finished:
-                                while len(global_text) > 0:
-                                    chunk_content = global_text.pop(0)
-                                    full_content += chunk_content
+                            while True:
+                                try:
+                                    # Wait for new content with timeout
+                                    chunk = global_state.text_queue.get(timeout=0.1)
+                                    full_content += chunk
                                     
                                     chunk_response = {
                                         "id": completion_id,
@@ -637,15 +653,24 @@ def chat_completions():
                                         "choices": [{
                                             "index": 0,
                                             "delta": {
-                                                "content": chunk_content
+                                                "content": chunk
                                             },
                                             "finish_reason": None
                                         }]
                                     }
                                     yield f"data: {json.dumps(chunk_response)}\n\n"
-                                
-                                model_thread.join(timeout=0.005)
-                                model_thread_finished = not model_thread.is_alive()
+                                    
+                                except Exception as e:
+                                    # Check if generation is finished
+                                    with global_state.lock:
+                                        if global_state.finished and global_state.text_queue.empty():
+                                            break
+                                    
+                                    # Check if model thread is still running
+                                    if not model_thread.is_alive() and global_state.text_queue.empty():
+                                        with global_state.lock:
+                                            global_state.finished = True
+                                            break
                             
                             # Send final chunk with finish_reason
                             final_chunk = {
@@ -662,29 +687,38 @@ def chat_completions():
                             yield f"data: {json.dumps(final_chunk)}\n\n"
                             yield "data: [DONE]\n\n"
                             
-                        finally:
-                            pass
+                        except Exception as e:
+                            print(f"Error in streaming: {str(e)}")
+                            yield f"data: {{'error': 'Stream error: {str(e)}'}}\n\n"
+                            yield "data: [DONE]\n\n"
                     
                     return Response(generate(), content_type='text/plain; charset=utf-8')
                 
                 else:
                     # Non-streaming response
-                    global_text = []
-                    global_state = -1
+                    global_state = GlobalState()
                     
                     model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
                     model_thread.start()
                     
                     full_content = ""
-                    model_thread_finished = False
                     
-                    while not model_thread_finished:
-                        while len(global_text) > 0:
-                            full_content += global_text.pop(0)
-                            time.sleep(0.005)
-                        
-                        model_thread.join(timeout=0.005)
-                        model_thread_finished = not model_thread.is_alive()
+                    while True:
+                        try:
+                            # Get content with timeout
+                            chunk = global_state.text_queue.get(timeout=0.1)
+                            full_content += chunk
+                        except:
+                            # Check if generation is finished
+                            with global_state.lock:
+                                if global_state.finished and global_state.text_queue.empty():
+                                    break
+                            
+                            # Check if model thread is still running
+                            if not model_thread.is_alive() and global_state.text_queue.empty():
+                                with global_state.lock:
+                                    if global_state.finished:
+                                        break
                     
                     response = {
                         "id": completion_id,

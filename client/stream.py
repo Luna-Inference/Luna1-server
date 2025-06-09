@@ -1,8 +1,8 @@
 import openai
-from api import *
+# from api import *
 client = openai.OpenAI(
-    api_key=OPENAI_API_KEY,
-    # base_url="http://localhost:8080/v1"
+    api_key="sk-rkllm-api-key",
+    base_url="http://localhost:8080/v1"
 )
 
 # Streaming chat completion
