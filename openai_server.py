@@ -12,10 +12,21 @@ import uuid
 import importlib.util
 from datetime import datetime
 from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
 from jinja2 import Template
 from config import *
 
 app = Flask(__name__)
+# Enable CORS for all routes
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }
+})
 
 # Set the dynamic library path
 rkllm_lib = ctypes.CDLL(LIBRARY_PATH)

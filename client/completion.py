@@ -1,9 +1,10 @@
 from openai import OpenAI
-from api import *
+# from api import *
 # Configure client to use our local server
 client = OpenAI(
-    # base_url="http://localhost:8080/v1",  # Point to our local server
-    api_key=OPENAI_API_KEY          # Use the API key defined in openai_server.py
+    base_url="http://localhost:8080/v1",  # Point to our local server
+    api_key = "sk-rkllm-api-key",
+    #api_key=OPENAI_API_KEY          # Use the API key defined in openai_server.py
 )
 
 completion = client.chat.completions.create(
