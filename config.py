@@ -4,7 +4,7 @@ This file centralizes all configurable parameters to make them easier to manage.
 """
 
 # Model Configuration
-MODEL_PATH = "../model/Qwen3-0.6B-w8a8-opt1-hybrid1-npu3.rkllm"
+MODEL_PATH = "../model/Qwen3-1.7B-1.2.0.rkllm"
 #"../model/Qwen3-0.6B-w8a8-opt1-hybrid1-npu3.rkllm"
 TARGET_PLATFORM = "rk3588"
 
