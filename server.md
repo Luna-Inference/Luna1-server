@@ -124,6 +124,8 @@ This document provides details about the API endpoints available in `server.py`.
     {
         "status": "healthy",
         "generation_status": "idle", // or "generating"
-        "tools_loaded": [] // Example: ["get_profession", "get_current_time_string"]
+        "tools_loaded": [], // Example: ["get_profession", "get_current_time_string"]
+        "prompt_eval_speed_wps": "150.50", // Words per second for the last prompt evaluation
+        "generation_speed_wps": "30.25"   // Words per second for the last answer generation
     }
     ```

@@ -193,8 +193,18 @@ from queue import Queue
 class GlobalState:
     def __init__(self):
         self.text_queue = Queue()
-        self.finished = False
+        self.finished = True  # Start as idle
         self.lock = threading.Lock()
+        self.reset_perf_metrics()
+
+    def reset_perf_metrics(self):
+        self.prompt_eval_start_time = 0
+        self.first_token_time = 0
+        self.generation_finish_time = 0
+        self.prompt_word_count = 0
+        self.generated_word_count = 0
+        self.prompt_eval_speed_wps = 0.0
+        self.generation_speed_wps = 0.0
 
 global_state = GlobalState()
 split_byte_data = bytes(b"")
@@ -214,14 +224,41 @@ def openai_error_response(message, error_type="invalid_request_error", param=Non
 def callback_impl(result, userdata, state):
     global global_state, split_byte_data
     with global_state.lock:
+        current_time = time.time()
+
         if state == 0:  # Normal text output (RKLLM_RUN_NORMAL)
+            if global_state.first_token_time == 0:
+                global_state.first_token_time = current_time
+                eval_duration = global_state.first_token_time - global_state.prompt_eval_start_time
+                if eval_duration > 0.001: # Avoid division by zero
+                    global_state.prompt_eval_speed_wps = global_state.prompt_word_count / eval_duration
+                else:
+                    global_state.prompt_eval_speed_wps = float('inf')
+
             if result.contents.text:
                 text_chunk = result.contents.text.decode('utf-8')
+                # Count words by splitting on whitespace
+                global_state.generated_word_count += len(text_chunk.split())
                 global_state.text_queue.put(text_chunk)
                 print(text_chunk, end="", flush=True)
+
         elif state == 2:  # Generation finished (RKLLM_RUN_FINISH)
+            global_state.generation_finish_time = current_time
+            # Ensure first_token_time is set, even for empty responses
+            if global_state.first_token_time == 0:
+                global_state.first_token_time = current_time
+
+            gen_duration = global_state.generation_finish_time - global_state.first_token_time
+            if gen_duration > 0.001 and global_state.generated_word_count > 0:
+                global_state.generation_speed_wps = global_state.generated_word_count / gen_duration
+            elif global_state.generated_word_count > 0:
+                global_state.generation_speed_wps = float('inf')
+            else:
+                global_state.generation_speed_wps = 0.0
+
             print("\n", end="", flush=True)
             global_state.finished = True
+
         elif state == 3:  # Error state (RKLLM_RUN_ERROR)
             print("run error", file=sys.stderr)
             global_state.finished = True
@@ -629,11 +666,13 @@ def chat_completions():
                     def generate():
                         global global_state
                         try:
-                            # Create a new state for this request
-                            request_state = GlobalState()
-                            global global_state
-                            global_state = request_state
-                            
+                            # Reset the global state for this new request
+                            with global_state.lock:
+                                global_state.reset_perf_metrics()
+                                global_state.finished = False
+                                global_state.prompt_word_count = len(prompt.split())
+                                global_state.prompt_eval_start_time = time.time()
+
                             model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
                             model_thread.start()
                             
@@ -858,12 +897,16 @@ def models():
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health():
-    generation_status = "idle" if global_state.finished else "generating"
-    return jsonify({
-        "status": "healthy",
-        "generation_status": generation_status,
-        "tools_loaded": list(TOOL_REGISTRY.keys())
-    }), 200
+    with global_state.lock:
+        generation_status = "idle" if global_state.finished else "generating"
+        response_data = {
+            "status": "healthy",
+            "generation_status": generation_status,
+            "tools_loaded": list(TOOL_REGISTRY.keys()),
+            "prompt_eval_speed_wps": f"{global_state.prompt_eval_speed_wps:.2f}",
+            "generation_speed_wps": f"{global_state.generation_speed_wps:.2f}"
+        }
+    return jsonify(response_data), 200
 
 # Global model instance
 rkllm_model = None
