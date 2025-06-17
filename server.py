@@ -172,7 +172,7 @@ class RKLLMResult(ctypes.Structure):
     ]
 
 # OpenAI API Configuration
-DEFAULT_MODEL_NAME = "rkllm-local"
+DEFAULT_MODEL_NAME = "luna-small"
 
 # Tool calling configuration
 TOOL_REGISTRY = {}  # Will store dynamically loaded tools
@@ -858,14 +858,19 @@ def models():
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "healthy", "tools_loaded": list(TOOL_REGISTRY.keys())}), 200
+    generation_status = "idle" if global_state.finished else "generating"
+    return jsonify({
+        "status": "healthy",
+        "generation_status": generation_status,
+        "tools_loaded": list(TOOL_REGISTRY.keys())
+    }), 200
 
 # Global model instance
 rkllm_model = None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rkllm_model_path', type=str, default=MODEL_PATH, help='Absolute path of the converted RKLLM model on the Linux board (default from config.py)')
+    parser.add_argument('--rkllm_model_path', type=str, default=SMALL_MODEL_PATH, help='Absolute path of the converted RKLLM model on the Linux board (default from config.py)')
     parser.add_argument('--target_platform', type=str, default=TARGET_PLATFORM, help='Target platform: e.g., rk3588/rk3576 (default from config.py)')
     parser.add_argument('--lora_model_path', type=str, help='Absolute path of the lora_model on the Linux board')
     parser.add_argument('--prompt_cache_path', type=str, help='Absolute path of the prompt_cache file on the Linux board')
