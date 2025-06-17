@@ -883,12 +883,12 @@ def models():
         "object": "list",
         "data": [
             {
-                "id": "luna-small",
+                "id": "luna-large",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "rkllm",
                 "permission": [],
-                "root": "luna-small",
+                "root": "luna-large",
                 "parent": None
             }
         ]
@@ -913,7 +913,7 @@ rkllm_model = None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rkllm_model_path', type=str, default=SMALL_MODEL_PATH, help='Absolute path of the converted RKLLM model on the Linux board (default from config.py)')
+    parser.add_argument('--rkllm_model_path', type=str, default=LARGE_MODEL_PATH, help='Absolute path of the converted RKLLM model on the Linux board (default from config.py)')
     parser.add_argument('--target_platform', type=str, default=TARGET_PLATFORM, help='Target platform: e.g., rk3588/rk3576 (default from config.py)')
     parser.add_argument('--lora_model_path', type=str, help='Absolute path of the lora_model on the Linux board')
     parser.add_argument('--prompt_cache_path', type=str, help='Absolute path of the prompt_cache file on the Linux board')
