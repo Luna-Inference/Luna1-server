@@ -129,3 +129,17 @@ This document provides details about the API endpoints available in `server.py`.
         "generation_speed_wps": "30.25"   // Words per second for the last answer generation
     }
     ```
+
+## 6. Device Recognition
+
+- **Endpoint**: `/luna`
+- **Method**: `GET`
+- **Description**: Used for device recognition among all devices on the network. Returns a simple JSON object indicating the device type.
+- **Request Body**: None
+- **Response (JSON)**:
+    ```json
+    {
+        "device": "luna"
+    }
+    ```
+

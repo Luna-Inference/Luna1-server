@@ -870,6 +870,12 @@ def completions():
         return openai_error_response(f"Internal server error: {str(e)}", error_type="server_error", status_code=500)
 
 # Compatibility route for /v1/ endpoint
+@app.route('/luna', methods=['GET'])
+def luna_recognition():
+    """Device recognition endpoint"""
+    return jsonify({"device": "luna"})
+
+# Compatibility route for /v1/ endpoint
 @app.route('/v1/', methods=['POST'])
 def v1_compatibility():
     """Redirect /v1/ calls to chat completions for compatibility"""
