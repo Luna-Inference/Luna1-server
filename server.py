@@ -924,7 +924,7 @@ if __name__ == "__main__":
     parser.add_argument('--lora_model_path', type=str, help='Absolute path of the lora_model on the Linux board')
     parser.add_argument('--prompt_cache_path', type=str, help='Absolute path of the prompt_cache file on the Linux board')
     parser.add_argument('--tools_dir', type=str, default='tools', help='Directory containing tool Python files')
-    parser.add_argument('--port', type=int, default=8080, help='Port to run the server on')
+    parser.add_argument('--port', type=int, default=SERVER_PORT, help='Port to run the server on (default from config.py)')
     args = parser.parse_args()
     
     print(f"Using model path: {args.rkllm_model_path}")
