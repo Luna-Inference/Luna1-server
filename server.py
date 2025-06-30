@@ -931,7 +931,7 @@ def wifi_connect():
 
     ssid = data.get('uuid')  # Using the key name specified in the spec
     wifi_password = data.get('password')
-
+    print(wifi_password)
     if not ssid or not wifi_password:
         return openai_error_response("Missing 'uuid' or 'password' parameter", param="uuid/password")
 
