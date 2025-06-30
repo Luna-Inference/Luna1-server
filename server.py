@@ -914,6 +914,40 @@ def health():
         }
     return jsonify(response_data), 200
 
+# WiFi connect endpoint
+@app.route('/wifi', methods=['POST'])
+def wifi_connect():
+    """Connect the device to a WiFi network using nmcli.
+
+    Expects JSON with the following structure:
+    {
+        "uuid": "<WiFi_SSID>",
+        "password": "<WiFi_Password>"
+    }
+    """
+    data = request.json
+    if not data:
+        return openai_error_response("Missing JSON body")
+
+    ssid = data.get('uuid')  # Using the key name specified in the spec
+    wifi_password = data.get('password')
+
+    if not ssid or not wifi_password:
+        return openai_error_response("Missing 'uuid' or 'password' parameter", param="uuid/password")
+
+    cmd = ["sudo", "nmcli", "dev", "wifi", "connect", ssid, "password", wifi_password]
+
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        success = result.returncode == 0
+        return jsonify({
+            "success": success,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip()
+        }), 200 if success else 400
+    except Exception as e:
+        return openai_error_response(f"Failed to execute nmcli: {str(e)}", error_type="server_error", status_code=500)
+
 # Global model instance
 rkllm_model = None
 

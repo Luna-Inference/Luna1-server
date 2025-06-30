@@ -143,3 +143,24 @@ This document provides details about the API endpoints available in `server.py`.
     }
     ```
 
+## 7. WiFi Connect
+
+- **Endpoint**: `/wifi`
+- **Method**: `POST`
+- **Description**: Connect the device to a WiFi network using `nmcli`.
+- **Request Body (JSON)**:
+    ```json
+    {
+        "uuid": "Your_WiFi_Name",
+        "password": "Your_Password"
+    }
+    ```
+- **Response (JSON)**:
+    ```json
+    {
+        "success": true,
+        "stdout": "...",  // Standard output from nmcli
+        "stderr": ""        // Standard error from nmcli, if any
+    }
+    ```
+
