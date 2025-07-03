@@ -5,7 +5,8 @@ This file centralizes all configurable parameters to make them easier to manage.
 
 # Model Configuration
 SMALL_MODEL_PATH = "../model/Qwen3-0.6B-w8a8-opt1-hybrid1-npu3.rkllm"
-LARGE_MODEL_PATH = "../model/Qwen3-1.7B-1.2.0.rkllm"
+LARGE_MODEL_PATH = "../model/Qwen3-0.6B-w8a8-opt1-hybrid1-npu3.rkllm"
+# "../model/Qwen3-1.7B-1.2.0.rkllm"
 TARGET_PLATFORM = "rk3588"
 
 # "../model/Gemma3-1B-w8a8-opt1.rkllm"

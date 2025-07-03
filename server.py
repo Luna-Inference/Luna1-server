@@ -11,6 +11,21 @@ import re
 import uuid
 import importlib.util
 from datetime import datetime
+
+# -------- Token counting helper --------
+def count_tokens(text: str) -> int:
+    """
+    Return the number of tokens in `text` using tiktoken's GPT-2 encoding if
+    available. Falls back to a simple whitespace split when tiktoken isn't
+    installed so the server continues to run.
+    """
+    try:
+        import tiktoken  # type: ignore
+        encoding = tiktoken.get_encoding("gpt2")
+        return len(encoding.encode(text))
+    except Exception:
+        # Fallback keeps the server functional even without tiktoken
+        return len(text.split())
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from jinja2 import Template
@@ -163,12 +178,22 @@ class RKLLMResultLogits(ctypes.Structure):
         ("num_tokens", ctypes.c_int)
     ]
 
+class RKLLMPerfStat(ctypes.Structure):
+    _fields_ = [
+        ("prefill_time_ms", ctypes.c_float),
+        ("prefill_tokens", ctypes.c_int),
+        ("generate_time_ms", ctypes.c_float),
+        ("generate_tokens", ctypes.c_int),
+        ("memory_usage_mb", ctypes.c_float),
+    ]
+
 class RKLLMResult(ctypes.Structure):
     _fields_ = [
         ("text", ctypes.c_char_p),
         ("token_id", ctypes.c_int),
         ("last_hidden_layer", RKLLMResultLastHiddenLayer),
-        ("logits", RKLLMResultLogits)
+        ("logits", RKLLMResultLogits),
+        ("perf", RKLLMPerfStat)
     ]
 
 # OpenAI API Configuration
@@ -205,6 +230,9 @@ class GlobalState:
         self.generated_word_count = 0
         self.prompt_eval_speed_wps = 0.0
         self.generation_speed_wps = 0.0
+        self.prefill_tps = 0.0
+        self.generation_tps = 0.0
+        self.memory_usage_mb = 0.0
 
 global_state = GlobalState()
 split_byte_data = bytes(b"")
@@ -237,8 +265,8 @@ def callback_impl(result, userdata, state):
 
             if result.contents.text:
                 text_chunk = result.contents.text.decode('utf-8')
-                # Count words by splitting on whitespace
-                global_state.generated_word_count += len(text_chunk.split())
+                # Count tokens in the generated chunk
+                global_state.generated_word_count += count_tokens(text_chunk)
                 global_state.text_queue.put(text_chunk)
                 print(text_chunk, end="", flush=True)
 
@@ -255,6 +283,18 @@ def callback_impl(result, userdata, state):
                 global_state.generation_speed_wps = float('inf')
             else:
                 global_state.generation_speed_wps = 0.0
+            # Capture RKLLM perf stats
+            if result and hasattr(result.contents, 'perf'):
+                perf = result.contents.perf
+                if perf.prefill_time_ms > 0:
+                    global_state.prefill_tps = perf.prefill_tokens / (perf.prefill_time_ms / 1000.0)
+                else:
+                    global_state.prefill_tps = 0.0
+                if perf.generate_time_ms > 0:
+                    global_state.generation_tps = perf.generate_tokens / (perf.generate_time_ms / 1000.0)
+                else:
+                    global_state.generation_tps = 0.0
+                global_state.memory_usage_mb = perf.memory_usage_mb
 
             print("\n", end="", flush=True)
             global_state.finished = True
@@ -651,9 +691,9 @@ def chat_completions():
                         "finish_reason": "stop"
                     }],
                     "usage": {
-                        "prompt_tokens": len(str(final_messages).split()),
-                        "completion_tokens": len(final_response.split()),
-                        "total_tokens": len(str(final_messages).split()) + len(final_response.split())
+                        "prompt_tokens": count_tokens(str(final_messages)),
+                        "completion_tokens": count_tokens(final_response),
+                        "total_tokens": count_tokens(str(final_messages)) + count_tokens(final_response)
                     }
                 }
                 
@@ -670,7 +710,7 @@ def chat_completions():
                             with global_state.lock:
                                 global_state.reset_perf_metrics()
                                 global_state.finished = False
-                                global_state.prompt_word_count = len(prompt.split())
+                                global_state.prompt_word_count = count_tokens(prompt)
                                 global_state.prompt_eval_start_time = time.time()
 
                             model_thread = threading.Thread(target=rkllm_model.run, args=(prompt,))
@@ -773,9 +813,9 @@ def chat_completions():
                             "finish_reason": "stop"
                         }],
                         "usage": {
-                            "prompt_tokens": len(prompt.split()),
-                            "completion_tokens": len(full_content.split()),
-                            "total_tokens": len(prompt.split()) + len(full_content.split())
+                            "prompt_tokens": count_tokens(prompt),
+                            "completion_tokens": count_tokens(full_content),
+                            "total_tokens": count_tokens(prompt) + count_tokens(full_content)
                         }
                     }
                     
@@ -854,9 +894,9 @@ def completions():
                     "finish_reason": "stop"
                 }],
                 "usage": {
-                    "prompt_tokens": len(prompt.split()),
-                    "completion_tokens": len(full_completion.split()),
-                    "total_tokens": len(prompt.split()) + len(full_completion.split())
+                    "prompt_tokens": count_tokens(prompt),
+                    "completion_tokens": count_tokens(full_completion),
+                    "total_tokens": count_tokens(prompt) + count_tokens(full_completion)
                 }
             }
             
@@ -909,8 +949,9 @@ def health():
             "status": "healthy",
             "generation_status": generation_status,
             "tools_loaded": list(TOOL_REGISTRY.keys()),
-            "prompt_eval_speed_wps": f"{global_state.prompt_eval_speed_wps:.2f}",
-            "generation_speed_wps": f"{global_state.generation_speed_wps:.2f}"
+            "prefill_speed_tps": f"{global_state.prefill_tps:.2f}",
+            "generation_speed_tps": f"{global_state.generation_tps:.2f}",
+            "memory_usage_mb": f"{global_state.memory_usage_mb:.2f}"
         }
     return jsonify(response_data), 200
 
