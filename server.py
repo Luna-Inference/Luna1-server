@@ -296,6 +296,38 @@ def callback_impl(result, userdata, state):
                     global_state.generation_tps = 0.0
                 global_state.memory_usage_mb = perf.memory_usage_mb
 
+                # Print to CLI for debugging (RKLLM native stats + deep debug)
+                print("--- RKLLM Performance Stats (native) ---")
+                print(f"Prefill: {perf.prefill_tokens} tokens in {perf.prefill_time_ms:.2f} ms  ({global_state.prefill_tps:.2f} TPS)")
+                print(f"Generate: {perf.generate_tokens} tokens in {perf.generate_time_ms:.2f} ms  ({global_state.generation_tps:.2f} TPS)")
+                print(f"Memory Usage: {global_state.memory_usage_mb:.2f} MB")
+
+                # --- Deep Debug -------------------------------------------------
+                try:
+                    perf_size = ctypes.sizeof(RKLLMPerfStat)
+                    perf_bytes = bytes(ctypes.string_at(ctypes.byref(perf), perf_size))
+                    print(f"Perf struct size: {perf_size} bytes")
+                    print(f"First 32 bytes (hex): {perf_bytes[:32].hex()}")
+                except Exception as dbg_e:
+                    print(f"[debug] could not dump perf bytes: {dbg_e}")
+
+                print("Token comparison (SDK vs Python):")
+                print(f"  Prefill tokens  – SDK: {perf.prefill_tokens}  | Python: {global_state.prompt_word_count}")
+                print(f"  Generate tokens – SDK: {perf.generate_tokens} | Python: {global_state.generated_word_count}")
+                print("------------------------------------------------------------")
+            else:
+                # Fallback CLI stats computed in Python
+                eval_duration_ms = (global_state.first_token_time - global_state.prompt_eval_start_time) * 1000.0 if global_state.first_token_time > 0 else 0
+                gen_duration_ms = (global_state.generation_finish_time - global_state.first_token_time) * 1000.0 if global_state.generation_finish_time > 0 else 0
+                if eval_duration_ms > 0:
+                    global_state.prefill_tps = global_state.prompt_word_count / (eval_duration_ms/1000.0)
+                if gen_duration_ms > 0:
+                    global_state.generation_tps = global_state.generated_word_count / (gen_duration_ms/1000.0)
+                print("--- RKLLM Performance Stats (fallback) ---")
+                print(f"Prefill: {global_state.prompt_word_count} tokens in {eval_duration_ms:.2f} ms  ({global_state.prefill_tps:.2f} TPS)")
+                print(f"Generate: {global_state.generated_word_count} tokens in {gen_duration_ms:.2f} ms  ({global_state.generation_tps:.2f} TPS)")
+
+
             print("\n", end="", flush=True)
             global_state.finished = True
 

@@ -113,20 +113,21 @@ This document provides details about the API endpoints available in `server.py`.
     }
     ```
 
-## 5. Health Check
+## 5. Health Check (Performance Metrics)
 
 -   **Endpoint**: `/health`
 -   **Method**: `GET`
--   **Description**: A simple health check endpoint.
+-   **Description**: Returns server status **and last-run performance statistics** provided by the RKLLM runtime.
 -   **Request Body**: None
 -   **Response (JSON)**:
     ```json
     {
         "status": "healthy",
-        "generation_status": "idle", // or "generating"
-        "tools_loaded": [], // Example: ["get_profession", "get_current_time_string"]
-        "prompt_eval_speed_wps": "150.50", // Words per second for the last prompt evaluation
-        "generation_speed_wps": "30.25"   // Words per second for the last answer generation
+        "generation_status": "idle",          // or "generating"
+        "tools_loaded": ["..."],             // dynamically loaded functions
+        "prefill_speed_tps": "405.85",      // Tokens-per-second during prompt prefill
+        "generation_speed_tps": "27.07",    // Tokens-per-second during answer generation
+        "memory_usage_mb": "1524.00"        // Peak RAM usage (MB)
     }
     ```
 
