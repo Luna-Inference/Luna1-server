@@ -21,7 +21,12 @@ def count_tokens(text: str) -> int:
     """
     try:
         import tiktoken  # type: ignore
-        encoding = tiktoken.get_encoding("gpt2")
+        try:
+            encoding = tiktoken.get_encoding("qwen")
+            print('qwen encoding found')
+        except Exception:
+            encoding = tiktoken.get_encoding("gpt2")
+            print('gpt2 encoding found')
         return len(encoding.encode(text))
     except Exception:
         # Fallback keeps the server functional even without tiktoken
@@ -179,6 +184,7 @@ class RKLLMResultLogits(ctypes.Structure):
     ]
 
 class RKLLMPerfStat(ctypes.Structure):
+    _pack_ = 1
     _fields_ = [
         ("prefill_time_ms", ctypes.c_float),
         ("prefill_tokens", ctypes.c_int),
